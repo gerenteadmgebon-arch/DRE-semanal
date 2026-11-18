@@ -99,6 +99,8 @@ body.full-mode{--navy:#e9edf5;--muted:#9aa6b8;--line:#293142;--orange:#ff7209;--
 
 .quick-form label>input,.quick-form label>select{margin-top:0}.full-mode .quick-dialog .quick-form label{gap:4px}.full-mode .quick-dialog .quick-actions{padding-bottom:8px}
 
+.full-mode .quick-form input[aria-invalid=true],.full-mode .quick-form select[aria-invalid=true]{border-color:#e78484;box-shadow:0 0 0 1px #e78484}.quick-dialog .field-error{color:#ffb8bf}
+
 </style>
 </head>
 <body>
@@ -947,6 +949,19 @@ function setupStatement({enabled,getDraft,onChange,canEdit,canView=canEdit,onVie
 
 return {comparisonTable,setupStatement};
 })();
+__modules["quick-validation.mjs"]=(()=>{
+const {amountFields,calculate}=__modules["calculo.mjs"];
+function quickEntryErrors(draft){
+ // Validate data before requesting CDI; the final calculation still validates its real rate.
+ const errors={...calculate({...draft,mode:'manual',taxa:draft.mode==='manual'?draft.taxa:'0'}).errors};
+ if(!String(draft.company??'').trim())errors.company='Informe a empresa.';
+ if(!['manual','cdi'].includes(draft.mode))errors.mode='Selecione como calcular o custo financeiro.';
+ for(const key of amountFields)if(!String(draft[key]??'').trim())errors[key]='Campo obrigatório. Informe 0,00 se não houver movimentação.';
+ return Object.fromEntries(['company','startDate','endDate',...amountFields,'mode','taxa'].filter(key=>errors[key]).map(key=>[key,errors[key]]));
+}
+
+return {quickEntryErrors};
+})();
 __modules["monthly-cdi.mjs"]=(()=>{
 const currentMonth=(now=new Date())=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit'}).format(now);
 const rateText=n=>n.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:4});
@@ -1248,6 +1263,7 @@ const hasActual=item=>item.model>=3||item.draft.kind==='Realizado';
 return {allFields,defaults,normalize,copyOld,cleanHistory,cleanArchives,historyResult,historyPeriod,hasActual};
 })();
 __modules["quick-dre.mjs"]=(()=>{
+const {quickEntryErrors}=__modules["quick-validation.mjs"];
 const {defaults}=__modules["storage.mjs"];
 const {calculate,amountFields,rows,parseMoney,numberText}=__modules["calculo.mjs"];
 const {fetchCDI,validQuote,quoteDescription}=__modules["cdi.mjs"];
@@ -1262,14 +1278,14 @@ function setupQuickDRE({enabled,canOpen,canEdit=()=>true,getCompany,openFull,sho
   const choices=el('div',undefined,'quick-choices');choices.append(button('＋ Preencher relatório rápido',()=>{draft={...defaults(),company:getCompany()||'Gebon Sorvetes'};drawForm();},true),button('Usar resultados do DRE completo',async()=>{close();await openFull();}));dialog.append(choices);dialog.showModal();
  }
  function openChoices(){generation++;controller?.abort();clearTimeout(timer);dialog.close();open();}
- function drawForm(){dialog.replaceChildren();const heading=el('div',undefined,'dialog-heading');heading.append(el('h2','Preenchimento rápido'),button('×',close));dialog.append(heading,el('p','Informe o EBITDA e os três saldos. O resumo e a imagem podem ser gerados sem salvar no histórico.','dash-caption'));const form=el('form',undefined,'quick-form');form.onsubmit=e=>e.preventDefault();
- const add=(key,label,type='text')=>{const field=el('label',label),input=el('input');field.className=['startDate','endDate'].includes(key)?'quick-date':'quick-field';input.type=type;input.id='quick-'+key;input.value=draft[key]||'';if(amountFields.includes(key))input.inputMode='decimal';if(key==='company')input.maxLength=60;if(amountFields.includes(key))input.placeholder='0,00';input.oninput=()=>{draft[key]=input.value;if(['startDate','endDate','estoque','pagar','receber'].includes(key)){draft.cdi=null;schedule();}};if(amountFields.includes(key))input.onblur=()=>{const n=parseMoney(input.value);if(Number.isFinite(n)){input.value=numberText(n);draft[key]=input.value;}};field.append(input);form.append(field);};
- add('company','Empresa');add('startDate','Data inicial','date');add('endDate','Data final','date');for(const key of amountFields)add(key,(rows.find(x=>x[1]===key)?.[0]||'Receita líquida')+(['ebitda','estoque','pagar','receber'].includes(key)?' *':' · opcional'));
- const mode=el('select');for(const [value,label]of [['cdi','CDI automático'],['manual','Taxa do período informada']]){const o=el('option',label);o.value=value;mode.append(o);}mode.value=draft.mode;const modeLabel=el('label','Custo financeiro');modeLabel.append(mode);modeLabel.className='quick-field';form.append(modeLabel);add('taxa','Taxa total do período (%)');const manual=form.querySelector('#quick-taxa').parentElement;manual.hidden=draft.mode!=='manual';mode.onchange=()=>{draft.mode=mode.value;manual.hidden=mode.value!=='manual';schedule();};const status=el('p','','quick-status');status.id='quick-status';form.append(status);const err=el('p','','field-error');err.id='quick-error';err.setAttribute('role','alert');form.append(err);const actions=el('div',undefined,'quick-actions');actions.append(button('Voltar',openChoices),button('Gerar resumo e imagem',generate,true));dialog.append(form,actions);schedule();
+ function drawForm(){dialog.replaceChildren();const heading=el('div',undefined,'dialog-heading');heading.append(el('h2','Preenchimento rápido'),button('×',close));dialog.append(heading,el('p','Todos os campos são obrigatórios. Sem movimentação, informe 0,00. O resumo pode ser gerado sem salvar no histórico.','dash-caption'));const form=el('form',undefined,'quick-form');form.onsubmit=e=>e.preventDefault();
+ const add=(key,label,type='text')=>{const field=el('label',label+' *'),input=el('input');input.required=true;input.setAttribute('aria-required','true');input.setAttribute('aria-describedby','quick-error');field.className=['startDate','endDate'].includes(key)?'quick-date':'quick-field';input.type=type;input.id='quick-'+key;input.value=draft[key]||'';if(amountFields.includes(key))input.inputMode='decimal';if(key==='company')input.maxLength=60;if(amountFields.includes(key))input.placeholder='0,00';input.oninput=()=>{draft[key]=input.value;input.removeAttribute('aria-invalid');if(['startDate','endDate','estoque','pagar','receber'].includes(key)){draft.cdi=null;schedule();}};if(amountFields.includes(key))input.onblur=()=>{const n=parseMoney(input.value);if(Number.isFinite(n)){input.value=numberText(n);draft[key]=input.value;}};field.append(input);form.append(field);};
+ add('company','Empresa');add('startDate','Data inicial','date');add('endDate','Data final','date');for(const key of amountFields)add(key,(rows.find(x=>x[1]===key)?.[0]||'Receita líquida'));
+ const mode=el('select');mode.id='quick-mode';mode.required=true;mode.setAttribute('aria-required','true');for(const [value,label]of [['cdi','CDI automático'],['manual','Taxa do período informada']]){const o=el('option',label);o.value=value;mode.append(o);}mode.value=draft.mode;const modeLabel=el('label','Custo financeiro *');modeLabel.append(mode);modeLabel.className='quick-field';form.append(modeLabel);add('taxa','Taxa total do período (%)');const manual=form.querySelector('#quick-taxa').parentElement;const updateManual=()=>{manual.hidden=draft.mode!=='manual';const input=form.querySelector('#quick-taxa');input.disabled=manual.hidden;input.required=!manual.hidden;input.setAttribute('aria-required',String(!manual.hidden));input.removeAttribute('aria-invalid');};updateManual();mode.onchange=()=>{draft.mode=mode.value;updateManual();schedule();};const status=el('p','','quick-status');status.id='quick-status';form.append(status);const err=el('p','','field-error');err.id='quick-error';err.setAttribute('role','alert');form.append(err);const actions=el('div',undefined,'quick-actions');actions.append(button('Voltar',openChoices),button('Gerar resumo e imagem',generate,true));dialog.append(form,actions);schedule();
  }
  function schedule(){clearTimeout(timer);generation++;controller?.abort();if(draft.mode==='cdi'&&!Object.keys(dateErrors(draft.startDate,draft.endDate)).length&&['estoque','pagar','receber'].every(k=>Number.isFinite(parseMoney(draft[k]))&&parseMoney(draft[k])>=0))timer=setTimeout(()=>quote().catch(e=>{const status=document.getElementById('quick-status');if(status)status.textContent=e.message+' Use a taxa informada se necessário.';}),600);}
  async function quote(){if(draft.mode!=='cdi'||validQuote(draft.cdi,draft.startDate,draft.endDate))return;const serial=++generation;controller?.abort();controller=new AbortController();const status=document.getElementById('quick-status');if(status)status.textContent='Consultando CDI…';const timeout=setTimeout(()=>controller.abort(),20000);try{const q=await fetchCDI(draft.startDate,draft.endDate,{signal:controller.signal});if(serial!==generation)throw Error('Dados alterados durante a consulta. Tente novamente.');draft.cdi=q;if(status)status.textContent=quoteDescription(q);}finally{clearTimeout(timeout);}}
- async function generate(){try{clearTimeout(timer);if(!draft.company.trim())throw Error('Informe a empresa.');if(draft.mode==='cdi')await quote();const r=calculate(draft);if(!r.ok)throw Error(Object.entries(r.errors).map(([key,msg])=>(rows.find(x=>x[1]===key)?.[0]||key)+': '+msg).join(' '));const copy=structuredClone(draft);close();showPreview(copy,r,'simplificado',false,()=>{draft=copy;drawForm();dialog.showModal();});}catch(e){const err=document.getElementById('quick-error');if(err)err.textContent=e.message;else notify(e.message);}}
+ async function generate(){try{clearTimeout(timer);const required=quickEntryErrors(draft);for(const input of dialog.querySelectorAll('input,select'))input.removeAttribute('aria-invalid');if(Object.keys(required).length){for(const key of Object.keys(required))document.getElementById('quick-'+key)?.setAttribute('aria-invalid','true');document.getElementById('quick-'+Object.keys(required)[0])?.focus();throw Error(Object.entries(required).slice(0,1).map(([key,message])=>((rows.find(x=>x[1]===key)?.[0])||({company:'Empresa',startDate:'Data inicial',endDate:'Data final',receitaLiquida:'Receita líquida',taxa:'Taxa do período',mode:'Custo financeiro'})[key]||key)+': '+message).join(' '));}if(draft.mode==='cdi')await quote();const r=calculate(draft);if(!r.ok)throw Error(Object.entries(r.errors).map(([key,msg])=>(rows.find(x=>x[1]===key)?.[0]||key)+': '+msg).join(' '));const copy=structuredClone(draft);close();showPreview(copy,r,'simplificado',false,()=>{draft=copy;drawForm();dialog.showModal();});}catch(e){const err=document.getElementById('quick-error');if(err)err.textContent=e.message;else notify(e.message);}}
  dialog.addEventListener('cancel',e=>{e.preventDefault();close();});return {open,reset(){close();draft=defaults();dialog.replaceChildren();}};
 }
 
