@@ -190,8 +190,8 @@ return {fullModel};
 __modules["full-calculo.mjs"]=(()=>{
 const {fullModel}=__modules["full-model.mjs"];
 // Restricted Excel expression interpreter. No eval and no executable content from records.
-function evaluateWorkbook(inputs,periodRatePct,adjustments={}){
- const values={},errors={},visiting=new Set();
+function evaluateWorkbook(inputs,periodRatePct,adjustments={},settledValues={}){
+ const values={...settledValues},errors={},visiting=new Set();
  const clean=ref=>ref.replaceAll('$','');
  function cell(ref){ref=clean(ref);if(Object.hasOwn(values,ref))return values[ref];if(visiting.has(ref))throw Error('#CIRC!');
   let formula=fullModel.formulas[ref];
@@ -683,7 +683,7 @@ const {monthlyPeriod,fullDraftResult}=__modules["statement-model.mjs"];
 const {dateErrors,monthRange}=__modules["dates.mjs"];
 const {completeInputs,consolidateLedger}=__modules["daily-model.mjs"];
 const {parseMoney,parseRate}=__modules["calculo.mjs"];
-const {fullModel}=__modules["full-calculo.mjs"];
+const {fullModel,evaluateWorkbook}=__modules["full-calculo.mjs"];
 function selectPanelRecord(entries,{month,company,ownerUid}){
  const found=[];for(const e of entries){if(e.deletedAt||e.ownerUid!==ownerUid)continue;try{const p=typeof e.payload==='string'?JSON.parse(e.payload):e.payload;if(p.kind!=='completo'||!['saved','comparison-saved','daily-saved'].includes(p.stage)||monthlyPeriod(p.draft)!==month||p.draft.company.trim().toLocaleLowerCase('pt-BR')!==company.trim().toLocaleLowerCase('pt-BR'))continue;const result=fullDraftResult(p.draft);if(result.ok)found.push({draft:p.draft,result,rank:e.createdAt?.toMillis?.()||Date.parse(p.savedAt||'')||0});}catch{}}
  return found.sort((a,b)=>b.rank-a.rank)[0]||null;
@@ -726,7 +726,9 @@ async function selectPanelPeriod(entries,{startDate,endDate,company,ownerUid,rea
  if(parts.length>1){
   const ids=new Set(parts.flatMap(p=>Object.keys(p.result.report.values))),values={};
   for(const id of ids)values[id]=balances.includes(id)||id.startsWith('C')?last.result.report.values[id]:parts.reduce((total,p)=>total+Math.round((p.result.report.values[id]||0)*100),0)/100;
-  result.report.values=values;result.rnf=Math.round(values.B175*100);result.custoFinanceiro=Math.round(values.B174*100);result.margem=values.B20?values.B175/values.B20:null;result.taxa=null;result.periodSummary=true;
+  const vertical=evaluateWorkbook(values,0,{},Object.fromEntries(Object.entries(values).filter(([id])=>!id.startsWith('C'))));
+  for(const id of Object.keys(fullModel.formulas).filter(id=>id.startsWith('C'))){if(Number.isFinite(vertical.values[id]))values[id]=vertical.values[id];else delete values[id];}
+  result.report.values=values;result.report.errors=vertical.errors;result.rnf=Math.round(values.B175*100);result.custoFinanceiro=Math.round(values.B174*100);result.margem=values.B20?values.B175/values.B20:null;result.taxa=null;result.periodSummary=true;
   result.values={vendasBrutas:Math.round(values.B3*100),margemContribuicao:Math.round(values.B71*100),ebitda:Math.round(values.B170*100),estoque:Math.round(-values.B171*100),pagar:Math.round(values.B172*100),receber:Math.round(-values.B173*100),receitaLiquida:Math.round(values.B20*100)};
  }
  notes.unshift(parts.length>1?'Soma dos resultados de cada competência ou recorte; saldos financeiros na última posição disponível.':'Resultado dos dados salvos no período.');
