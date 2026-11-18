@@ -1,0 +1,108 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function verified() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true;
+    }
+    function email() { return request.auth.token.email.lower(); }
+    function owner() { return verified() && email() == 'gerente.admgebon@gmail.com'; }
+    function accessPath() { return /databases/$(database)/documents/gebonPortalAllowedEmails/$(email()); }
+    function active() {
+      return owner() || (verified() && exists(accessPath())
+        && get(accessPath()).data.email == email()
+        && get(accessPath()).data.status == 'active');
+    }
+    function editor() { return owner() || (active() && get(accessPath()).data.get('role', 'reader') == 'editor'); }
+    function validEmail(e) {
+      return e is string && e.size() <= 254
+        && e.matches('^[^@/\\s]+@[^@/\\s]+[.][^@/\\s]+$') && e == e.lower();
+    }
+    function validAccess(d, address) {
+      return d.keys().hasAll(['email','status','createdAt','updatedAt','updatedBy'])
+        && d.keys().hasOnly(['email','status','role','createdAt','updatedAt','updatedBy'])
+        && d.get('role', 'reader') in ['editor','reader']
+        && validEmail(d.email) && d.email == address
+        && address != 'gerente.admgebon@gmail.com'
+        && d.status in ['active','blocked']
+        && d.createdAt is timestamp && d.updatedAt == request.time
+        && d.updatedBy == request.auth.uid;
+    }
+    match /gebonPortalAllowedEmails/{address} {
+      allow get: if editor() || (verified() && email() == address);
+      allow list: if editor() && request.query.limit != null && request.query.limit <= 50;
+      allow create: if editor() && validAccess(request.resource.data, address)
+        && request.resource.data.createdAt == request.time;
+      allow update: if editor() && validAccess(request.resource.data, address)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','role','updatedAt','updatedBy']);
+      allow delete: if false;
+    }
+    function validLink(link) {
+      return link is map && link.keys().hasAll(['name','url']) && link.keys().hasOnly(['name','url'])
+        && link.name is string && link.name.size() > 0 && link.name.size() <= 70
+        && link.url is string && link.url.size() <= 2000
+        && (link.url == '' || link.url.matches('https?://[^\\s]+'));
+    }
+    match /gebonPortalConfig/main {
+      allow get: if active();
+      allow list: if false;
+      allow create, update: if editor()
+        && request.resource.data.keys().hasAll(['links','updatedAt','updatedBy'])
+        && request.resource.data.keys().hasOnly(['links','updatedAt','updatedBy'])
+        && request.resource.data.links is list && request.resource.data.links.size() in [3,6]
+        && validLink(request.resource.data.links[0]) && validLink(request.resource.data.links[1])
+        && validLink(request.resource.data.links[2])
+        && (request.resource.data.links.size() == 3 || (validLink(request.resource.data.links[3]) && validLink(request.resource.data.links[4]) && validLink(request.resource.data.links[5])))
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid;
+      allow delete: if false;
+    }
+    function validDre(d, maxSize) {
+      return d.ownerUid == request.auth.uid && d.ownerEmail == email()
+        && d.kind in ['simplificado','completo'] && d.schemaVersion == 6 && d.scope == 'shared'
+        && d.revision is int && d.revision >= 1
+        && d.writerId is string && d.writerId.size() >= 8 && d.writerId.size() <= 100
+        && d.payload is string && d.payload.size() > 0 && d.payload.size() <= maxSize
+        && d.updatedAt == request.time;
+    }
+    function draftKeys(d) {
+      return d.keys().hasAll(['scope','ownerUid','ownerEmail','kind','schemaVersion','payload','updatedAt','revision','writerId'])
+        && d.keys().hasOnly(['scope','ownerUid','ownerEmail','kind','schemaVersion','payload','updatedAt','revision','writerId']);
+    }
+    match /gebonDreDrafts/{id} {
+      allow get: if active();
+      allow list: if active() && request.query.limit != null && request.query.limit <= 100;
+      allow create: if editor() && validDre(request.resource.data, 100000) && draftKeys(request.resource.data)
+        && id == 'shared_' + request.resource.data.kind && request.resource.data.revision == 1;
+      allow update: if editor() && validDre(request.resource.data, 100000) && draftKeys(request.resource.data)
+        && id == 'shared_' + request.resource.data.kind && request.resource.data.revision == resource.data.revision + 1;
+      allow delete: if false;
+    }
+    match /gebonDreEntries/{id} {
+      allow get: if active();
+      allow list: if active() && request.query.limit != null && request.query.limit <= 100;
+      allow create: if editor() && validDre(request.resource.data, 100000)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.deletedAt == null && request.resource.data.deletedBy == null
+        && request.resource.data.keys().hasAll(['scope','ownerUid','ownerEmail','kind','schemaVersion','payload','createdAt','updatedAt','deletedAt','deletedBy','revision','writerId'])
+        && request.resource.data.keys().hasOnly(['scope','ownerUid','ownerEmail','kind','schemaVersion','payload','createdAt','updatedAt','deletedAt','deletedBy','revision','writerId']);
+      allow update: if editor()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedAt','deletedBy','updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && ((request.resource.data.deletedAt == request.time && request.resource.data.deletedBy == request.auth.uid)
+          || (request.resource.data.deletedAt == null && request.resource.data.deletedBy == null));
+      allow delete: if false;
+    }
+    match /gebonDreDaily/{id} {
+      allow get: if active();
+      allow list: if active() && request.query.limit != null && request.query.limit <= 100;
+      allow create: if editor() && id.matches('shared_[a-f0-9]{64}') && validDre(request.resource.data, 500000)
+        && request.resource.data.kind == 'completo' && draftKeys(request.resource.data) && request.resource.data.revision == 1;
+      allow update: if editor() && id.matches('shared_[a-f0-9]{64}') && validDre(request.resource.data, 500000)
+        && request.resource.data.kind == 'completo' && draftKeys(request.resource.data) && request.resource.data.revision == resource.data.revision + 1;
+      allow delete: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
