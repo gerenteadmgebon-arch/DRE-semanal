@@ -27,3 +27,7 @@ O modelo compartilhado de Editor/Leitor foi preparado e testado; sua ativação 
 4. Conferir os dois deploys do GitHub Pages. Recarregar abas antigas, que não podem continuar gravando no modelo separado.
 
 A publicação intermediária anterior foi rejeitada. Depois foram publicados dois ajustes autorizados e compatíveis com as permissões atuais: remoção de menus (459cef719b1210e065c5df32380b222a8dd48367) e controles/resumo diário/formulário/data inicial-final/Excel (77cb0b064d3228aeb07ced2b10ccd4dd16a7e625). Esta branch já incorpora todos esses ajustes. Consulte o SHA atual de main antes da ativação e preserve as alterações posteriores.
+
+## Atualização financeira de 25/11/2026
+
+A produção recebeu o modelo `Orçado DRE - Final.xlsx`, importação de 12 competências para Orçado/Realizado e novo dashboard no commit `fed95202510fd251587766a665533c86cc536fdc`. O `index.html` desta branch de permissões ainda precede essa atualização e NÃO deve substituir o de produção diretamente. Antes de ativar os perfis compartilhados, integrar a versão financeira de main preservando as transações, regras e verificações de Editor/Leitor; testar migração dos modelos `dre-xlsx-20261117` e `dre-orcado-final-20261125`, importação por cenário, diário, dashboard e exportação. Nenhuma regra de acesso foi alterada nesta atualização financeira.
